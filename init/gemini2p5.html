@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>New Duck Flies (Lite)</title>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Fredoka', sans-serif; }
+        #ui { position: absolute; top: 20px; left: 20px; font-size: 30px; color: white; text-shadow: 2px 2px rgba(0,0,0,0.1); pointer-events: none; }
+        #over {
+            display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.8); align-items: center; justify-content: center; flex-direction: column;
+        }
+        button {
+            padding: 15px 30px; font-size: 20px; background: #FFD700; border: none; border-radius: 30px;
+            color: white; cursor: pointer; font-family: inherit; box-shadow: 0 4px 0 #DAA520;
+        }
+        button:active { transform: translateY(4px); box-shadow: none; }
+    </style>
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+</head>
+<body>
+    <div id="ui">SCORE: <span id="s">0</span></div>
+    <div id="over">
+        <h1 style="color:#FF8C00; font-size: 50px; margin: 0;">OOPS!</h1>
+        <p style="color:#555;">Score: <span id="fs">0</span></p>
+        <button onclick="reset()">TRY AGAIN</button>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 200);
+        camera.position.set(0, 3, 10);
+        camera.lookAt(0, 0, -5);
+
+        const renderer = new THREE.WebGLRenderer({antialias: true});
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Light
+        const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
+        scene.add(hemi);
+        const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+        dir.position.set(5, 10, 7);
+        scene.add(dir);
+
+        // Player Duck
+        const player = new THREE.Group();
+        scene.add(player);
+        
+        const matY = new THREE.MeshLambertMaterial({color: 0xFFD700});
+        const matO = new THREE.MeshLambertMaterial({color: 0xFFA500});
+        
+        const body = new THREE.Mesh(new THREE.SphereGeometry(1), matY);
+        player.add(body);
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.7), matY);
+        head.position.set(0, 0.8, 0.7);
+        player.add(head);
+        const beak = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.6), matO);
+        beak.rotation.x = Math.PI/2;
+        beak.position.set(0, 0.8, 1.4);
+        player.add(beak);
+        
+        const wingG = new THREE.SphereGeometry(0.6);
+        wingG.scale(1, 0.2, 0.6);
+        const lw = new THREE.Mesh(wingG, matY);
+        lw.position.x = 1;
+        const rw = new THREE.Mesh(wingG, matY);
+        rw.position.x = -1;
+        player.add(lw, rw);
+
+        // State
+        let score = 0;
+        let dead = false;
+        let paused = false;
+        const keys = {x:0, y:0, s:false};
+        const bullets = [];
+        const enemies = [];
+        const clouds = [];
+
+        // Inputs
+        window.onkeydown = e => {
+            if(e.key === 'ArrowLeft') keys.x = -1;
+            if(e.key === 'ArrowRight') keys.x = 1;
+            if(e.key === 'ArrowUp') keys.y = 1;
+            if(e.key === 'ArrowDown') keys.y = -1;
+            if(e.key === ' ') keys.s = true;
+        }
+        window.onkeyup = e => {
+            if(['ArrowLeft','ArrowRight'].includes(e.key)) keys.x = 0;
+            if(['ArrowUp','ArrowDown'].includes(e.key)) keys.y = 0;
+            if(e.key === ' ') keys.s = false;
+        }
+        window.onmessage = e => { if(e.data.type==='PAUSE_GAME') paused=e.data.payload; };
+        if('ontouchstart' in window) {
+            window.ontouchstart = e => {
+                if(e.touches[0].clientX < window.innerWidth/2) keys.x = -1; // Simple left/right
+                else keys.s = true; 
+            }
+            window.ontouchend = () => { keys.x=0; keys.s=false; }
+        }
+
+        // Helpers
+        function spawnCloud() {
+            const g = new THREE.Group();
+            const m = new THREE.MeshBasicMaterial({color: 0xffffff});
+            for(let i=0; i<3; i++) {
+                const p = new THREE.Mesh(new THREE.SphereGeometry(2), m);
+                p.position.set((Math.random()-0.5)*3, (Math.random()-0.5)*2, 0);
+                g.add(p);
+            }
+            g.position.set((Math.random()-0.5)*100, Math.random()*20-10, -100);
+            scene.add(g);
+            clouds.push(g);
+        }
+
+        function spawnEnemy() {
+            const m = new THREE.MeshLambertMaterial({color: 0x555555}); // Dark cloud
+            const e = new THREE.Mesh(new THREE.IcosahedronGeometry(1.5), m);
+            e.position.set((Math.random()-0.5)*30, (Math.random()-0.5)*15, -100);
+            scene.add(e);
+            enemies.push(e);
+        }
+
+        window.reset = () => {
+            score = 0; dead = false;
+            document.getElementById('s').innerText = 0;
+            document.getElementById('over').style.display = 'none';
+            player.position.set(0,0,0);
+            enemies.forEach(e => scene.remove(e)); enemies.length=0;
+            bullets.forEach(b => scene.remove(b)); bullets.length=0;
+        }
+
+        let lastShot = 0;
+        function loop() {
+            requestAnimationFrame(loop);
+            if(paused) return;
+            if(dead) return;
+
+            // Move Player
+            player.position.x += keys.x * 0.5;
+            player.position.y += keys.y * 0.5;
+            player.position.x = Math.max(-15, Math.min(15, player.position.x));
+            player.position.y = Math.max(-10, Math.min(10, player.position.y));
+            
+            player.rotation.z = -keys.x * 0.5;
+            lw.rotation.z = Math.sin(Date.now()/50) * 0.5;
+            rw.rotation.z = -Math.sin(Date.now()/50) * 0.5;
+
+            // Shoot
+            if(keys.s && Date.now() - lastShot > 200) {
+                const b = new THREE.Mesh(new THREE.SphereGeometry(0.4), new THREE.MeshBasicMaterial({color:0xccffff}));
+                b.position.copy(player.position);
+                scene.add(b);
+                bullets.push(b);
+                lastShot = Date.now();
+            }
+
+            // Move Environment
+            if(Math.random()<0.05) spawnCloud();
+            clouds.forEach((c,i) => {
+                c.position.z += 0.5;
+                if(c.position.z > 20) { scene.remove(c); clouds.splice(i,1); }
+            });
+
+            // Enemies
+            if(Math.random()<0.03) spawnEnemy();
+            const pBox = new THREE.Box3().setFromObject(player);
+            
+            enemies.forEach((e,i) => {
+                e.position.z += 0.8;
+                e.rotation.x += 0.05;
+                
+                const eBox = new THREE.Box3().setFromObject(e);
+                if(eBox.intersectsBox(pBox)) {
+                    dead = true;
+                    document.getElementById('fs').innerText = score;
+                    document.getElementById('over').style.display = 'flex';
+                }
+                
+                if(e.position.z > 10) { scene.remove(e); enemies.splice(i,1); }
+            });
+
+            // Bullets
+            bullets.forEach((b,i) => {
+                b.position.z -= 2;
+                const bBox = new THREE.Box3().setFromObject(b);
+                let hit = false;
+                enemies.forEach((e,j) => {
+                    if(hit) return;
+                    const eBox = new THREE.Box3().setFromObject(e);
+                    if(bBox.intersectsBox(eBox)) {
+                        scene.remove(e); enemies.splice(j,1);
+                        hit = true;
+                        score += 100;
+                        document.getElementById('s').innerText = score;
+                    }
+                });
+                if(hit || b.position.z < -100) { scene.remove(b); bullets.splice(i,1); }
+            });
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Init clouds
+        for(let i=0;i<20;i++) spawnCloud();
+        loop();
+    </script>
+</body>
+</html>

@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>New Duck Flies (새 오리 날다)</title>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --sky-blue: #87CEEB;
+            --duck-yellow: #FFD700;
+            --cloud-white: #FFFFFF;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: var(--sky-blue);
+            font-family: 'Fredoka', sans-serif;
+            touch-action: none;
+            user-select: none;
+        }
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+        }
+        #score-board {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            font-size: 28px;
+            text-shadow: 2px 2px 0px rgba(0,0,0,0.1);
+            font-weight: 700;
+            background: rgba(255,255,255,0.3);
+            padding: 10px 20px;
+            border-radius: 20px;
+            backdrop-filter: blur(5px);
+        }
+        
+        #game-over {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: auto;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 40px;
+            border-radius: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #FF8C00;
+            font-size: 48px;
+            margin: 0 0 10px 0;
+            letter-spacing: -1px;
+        }
+        button {
+            background: #FFD700;
+            border: none;
+            color: #fff;
+            padding: 15px 40px;
+            font-size: 24px;
+            font-family: 'Fredoka', sans-serif;
+            font-weight: 700;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 5px 15px rgba(255, 215, 0, 0.4);
+            transition: transform 0.1s;
+        }
+        button:hover {
+            transform: scale(1.05);
+        }
+        
+        #mobile-controls {
+            display: none;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: auto;
+        }
+        #joystick-zone {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            width: 120px;
+            height: 120px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.4);
+        }
+        #joystick-knob {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 50px;
+            background: #fff;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        #fire-zone {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 50%;
+            height: 100%;
+        }
+        #fire-hint {
+            position: absolute;
+            bottom: 60px;
+            right: 40px;
+            background: #FFD700;
+            color: #fff;
+            border-radius: 50%;
+            width: 80px;
+            height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            box-shadow: 0 4px 10px rgba(255,215,0,0.3);
+        }
+    </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <div id="score-board">SCORE: <span id="score-val">0</span></div>
+        
+        <div id="game-over">
+            <h1>Oh No!</h1>
+            <p style="color:#666; margin-bottom: 20px; font-size: 18px;">You bumped into a cloud!</p>
+            <p style="color:#444; font-weight:bold; margin-bottom: 30px;">Score: <span id="final-score">0</span></p>
+            <button id="restart-btn">Try Again</button>
+        </div>
+    </div>
+
+    <div id="mobile-controls">
+        <div id="joystick-zone"><div id="joystick-knob"></div></div>
+        <div id="fire-zone"><div id="fire-hint">POP!</div></div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+        const CONFIG = {
+            speed: 40,
+            shipSpeed: 0.8,
+            shipBoundX: 20,
+            shipBoundY: 12,
+            fireRate: 0.2,
+            colors: {
+                bg: 0x87CEEB,
+                duck: 0xFFD700,
+                beak: 0xFFA500,
+                bubble: 0xCCFFFF,
+                cloud: 0x8899AA, 
+                cloudWhite: 0xFFFFFF
+            }
+        };
+
+        let state = {
+            score: 0,
+            isRunning: true,
+            isPaused: false,
+            lastTime: 0,
+            lastShot: 0,
+            input: { x: 0, y: 0, shoot: false }
+        };
+        
+        window.addEventListener('message', (e) => {
+             if (e.data && e.data.type === 'PAUSE_GAME') {
+                 state.isPaused = e.data.payload;
+                 if (!state.isPaused) clock.getDelta();
+             }
+        });
+
+        // --- SCENE ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(CONFIG.colors.bg);
+        scene.fog = new THREE.Fog(CONFIG.colors.bg, 20, 150);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+        camera.position.set(0, 4, 15);
+        camera.lookAt(0, 2, -20);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.SoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        // --- LIGHTING ---
+        const hemiLight = new THREE.HemisphereLight(0xffffff, 0x87CEEB, 0.8);
+        scene.add(hemiLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        scene.add(dirLight);
+
+        // --- POST PROCESSING ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0.7; // Only bloom very bright things
+        bloomPass.strength = 0.6;
+        bloomPass.radius = 0.8;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- ASSETS ---
+
+        // 1. Background Clouds (Procedural)
+        const cloudGeo = new THREE.SphereGeometry(5, 7, 7);
+        const cloudMat = new THREE.MeshPhongMaterial({ 
+            color: 0xffffff, 
+            flatShading: true,
+            shininess: 0
+        });
+        const bgClouds = new THREE.Group();
+        scene.add(bgClouds);
+
+        for(let i=0; i<40; i++) {
+            const cloud = new THREE.Group();
+            const puffs = 3 + Math.floor(Math.random()*3);
+            for(let j=0; j<puffs; j++) {
+                const mesh = new THREE.Mesh(cloudGeo, cloudMat);
+                mesh.position.set(
+                    (Math.random()-0.5)*10,
+                    (Math.random()-0.5)*5,
+                    (Math.random()-0.5)*5
+                );
+                mesh.scale.setScalar(0.5 + Math.random());
+                cloud.add(mesh);
+            }
+            cloud.position.set(
+                (Math.random()-0.5)*300,
+                -30 + Math.random()*60,
+                -100 - Math.random()*200
+            );
+            bgClouds.add(cloud);
+        }
+
+        // 2. The Duck (Player)
+        const playerGroup = new THREE.Group();
+        scene.add(playerGroup);
+
+        const duckMat = new THREE.MeshStandardMaterial({ color: CONFIG.colors.duck, roughness: 0.3 });
+        const beakMat = new THREE.MeshStandardMaterial({ color: CONFIG.colors.beak, roughness: 0.5 });
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+        // Body
+        const bodyMesh = new THREE.Mesh(new THREE.SphereGeometry(1.2, 16, 16), duckMat);
+        bodyMesh.scale.y = 0.8;
+        bodyMesh.castShadow = true;
+        playerGroup.add(bodyMesh);
+
+        // Head
+        const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 16), duckMat);
+        headMesh.position.set(0, 1, 0.8);
+        headMesh.castShadow = true;
+        playerGroup.add(headMesh);
+
+        // Beak
+        const beakMesh = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.8, 16), beakMat);
+        beakMesh.rotation.x = Math.PI/2;
+        beakMesh.position.set(0, 1, 1.6);
+        playerGroup.add(beakMesh);
+
+        // Eyes
+        const leftEye = new THREE.Mesh(new THREE.SphereGeometry(0.12), eyeMat);
+        leftEye.position.set(0.3, 1.2, 1.4);
+        playerGroup.add(leftEye);
+        const rightEye = leftEye.clone();
+        rightEye.position.set(-0.3, 1.2, 1.4);
+        playerGroup.add(rightEye);
+
+        // Wings
+        const wingGeo = new THREE.SphereGeometry(0.8, 16, 16);
+        wingGeo.scale(1, 0.2, 0.6);
+        const leftWing = new THREE.Mesh(wingGeo, duckMat);
+        leftWing.position.set(1.2, 0, 0);
+        const rightWing = new THREE.Mesh(wingGeo, duckMat);
+        rightWing.position.set(-1.2, 0, 0);
+        playerGroup.add(leftWing);
+        playerGroup.add(rightWing);
+
+        // --- OBJECT POOLING ---
+        class Pool {
+            constructor(createFn, count) {
+                this.pool = [];
+                this.active = [];
+                for (let i = 0; i < count; i++) {
+                    const obj = createFn();
+                    obj.visible = false;
+                    scene.add(obj);
+                    this.pool.push(obj);
+                }
+            }
+            get() {
+                if (this.pool.length === 0) return null;
+                const obj = this.pool.pop();
+                obj.visible = true;
+                this.active.push(obj);
+                return obj;
+            }
+            release(obj) {
+                const idx = this.active.indexOf(obj);
+                if(idx > -1) {
+                    this.active.splice(idx, 1);
+                    obj.visible = false;
+                    this.pool.push(obj);
+                }
+            }
+            reset() {
+                while(this.active.length > 0) this.release(this.active[0]);
+            }
+        }
+
+        // Projectile (Bubbles)
+        const bubbleGeo = new THREE.SphereGeometry(0.4, 16, 16);
+        const bubbleMat = new THREE.MeshPhysicalMaterial({
+            color: CONFIG.colors.bubble,
+            transmission: 0.6,
+            opacity: 0.8,
+            transparent: true,
+            roughness: 0,
+            ior: 1.5
+        });
+        const laserPool = new Pool(() => new THREE.Mesh(bubbleGeo, bubbleMat), 30);
+
+        // Enemy (Storm Clouds)
+        const enemyMat = new THREE.MeshPhongMaterial({ color: CONFIG.colors.cloud, flatShading: true });
+        const enemyPool = new Pool(() => {
+            const group = new THREE.Group();
+            const main = new THREE.Mesh(new THREE.IcosahedronGeometry(1.5, 0), enemyMat);
+            group.add(main);
+            const sub1 = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 0), enemyMat);
+            sub1.position.set(1, 0.5, 0);
+            group.add(sub1);
+            const sub2 = new THREE.Mesh(new THREE.IcosahedronGeometry(0.8, 0), enemyMat);
+            sub2.position.set(-1.2, -0.2, 0.5);
+            group.add(sub2);
+            
+            group.userData = { velocity: new THREE.Vector3(), rot: new THREE.Vector3() };
+            return group;
+        }, 15);
+
+        // Particles (Confetti)
+        const particleGeo = new THREE.PlaneGeometry(0.3, 0.3);
+        const particlePool = new Pool(() => {
+            const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+            const mesh = new THREE.Mesh(particleGeo, mat);
+            mesh.userData = { life: 0, vel: new THREE.Vector3() };
+            return mesh;
+        }, 100);
+
+
+        // --- INPUT ---
+        window.addEventListener('keydown', (e) => {
+            if(e.code === 'ArrowUp' || e.code === 'KeyW') state.input.y = 1;
+            if(e.code === 'ArrowDown' || e.code === 'KeyS') state.input.y = -1;
+            if(e.code === 'ArrowLeft' || e.code === 'KeyA') state.input.x = -1;
+            if(e.code === 'ArrowRight' || e.code === 'KeyD') state.input.x = 1;
+            if(e.code === 'Space') state.input.shoot = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            if(['ArrowUp','KeyW','ArrowDown','KeyS'].includes(e.code)) state.input.y = 0;
+            if(['ArrowLeft','KeyA','ArrowRight','KeyD'].includes(e.code)) state.input.x = 0;
+            if(e.code === 'Space') state.input.shoot = false;
+        });
+
+        // Mobile
+        if('ontouchstart' in window) {
+            document.getElementById('mobile-controls').style.display = 'block';
+            const zone = document.getElementById('joystick-zone');
+            const knob = document.getElementById('joystick-knob');
+            let stickId = null, startX=0, startY=0;
+
+            zone.addEventListener('touchstart', e => {
+                e.preventDefault();
+                const t = e.changedTouches[0];
+                stickId = t.identifier;
+                startX = t.clientX;
+                startY = t.clientY;
+            });
+            
+            zone.addEventListener('touchmove', e => {
+                e.preventDefault();
+                if(stickId === null) return;
+                for(let i=0; i<e.changedTouches.length; i++) {
+                    if(e.changedTouches[i].identifier === stickId) {
+                        const t = e.changedTouches[i];
+                        let dx = t.clientX - startX;
+                        let dy = t.clientY - startY;
+                        const dist = Math.sqrt(dx*dx+dy*dy);
+                        const max = 40;
+                        if(dist > max) { dx *= max/dist; dy *= max/dist; }
+                        knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+                        state.input.x = dx/max;
+                        state.input.y = -dy/max;
+                    }
+                }
+            });
+
+            const endStick = () => { stickId = null; state.input.x=0; state.input.y=0; knob.style.transform='translate(-50%, -50%)'; };
+            zone.addEventListener('touchend', endStick);
+            
+            const fireZone = document.getElementById('fire-zone');
+            fireZone.addEventListener('touchstart', (e) => { e.preventDefault(); state.input.shoot = true; });
+            fireZone.addEventListener('touchend', (e) => { e.preventDefault(); state.input.shoot = false; });
+        }
+
+        // --- LOGIC ---
+        function spawnEnemy() {
+            const e = enemyPool.get();
+            if(!e) return;
+            e.position.set( (Math.random()-0.5)*40, (Math.random()-0.5)*20, -150 );
+            e.rotation.set( Math.random()*Math.PI, Math.random()*Math.PI, 0 );
+        }
+
+        function explode(pos, color) {
+            for(let i=0; i<8; i++) {
+                const p = particlePool.get();
+                if(p) {
+                    p.position.copy(pos);
+                    p.material.color.setHex(color || Math.random() * 0xffffff);
+                    p.userData.vel.set( (Math.random()-0.5)*10, (Math.random()-0.5)*10, (Math.random()-0.5)*10 );
+                    p.userData.life = 1.0;
+                }
+            }
+        }
+
+        function restart() {
+            state.score = 0;
+            state.isRunning = true;
+            document.getElementById('score-val').innerText = '0';
+            document.getElementById('game-over').style.display = 'none';
+            enemyPool.reset();
+            laserPool.reset();
+            particlePool.reset();
+            playerGroup.position.set(0,0,0);
+        }
+        document.getElementById('restart-btn').onclick = restart;
+
+        const clock = new THREE.Clock();
+        const box1 = new THREE.Box3();
+        const box2 = new THREE.Box3();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if(state.isPaused) return;
+
+            const dt = Math.min(clock.getDelta(), 0.1);
+            const now = clock.getElapsedTime();
+
+            if(state.isRunning) {
+                // Environment
+                bgClouds.children.forEach(c => {
+                    c.position.z += 20 * dt;
+                    if(c.position.z > 50) {
+                        c.position.z = -200;
+                        c.position.x = (Math.random()-0.5)*300;
+                    }
+                });
+
+                // Player
+                const tx = state.input.x * CONFIG.speed * dt;
+                const ty = state.input.y * CONFIG.speed * dt;
+                playerGroup.position.x = THREE.MathUtils.lerp(playerGroup.position.x, playerGroup.position.x + tx, 0.1);
+                playerGroup.position.y = THREE.MathUtils.lerp(playerGroup.position.y, playerGroup.position.y + ty, 0.1);
+                
+                playerGroup.position.x = THREE.MathUtils.clamp(playerGroup.position.x, -CONFIG.shipBoundX, CONFIG.shipBoundX);
+                playerGroup.position.y = THREE.MathUtils.clamp(playerGroup.position.y, -CONFIG.shipBoundY, CONFIG.shipBoundY);
+
+                playerGroup.rotation.z = -state.input.x * 0.5;
+                playerGroup.rotation.x = state.input.y * 0.3;
+
+                // Wing flap
+                const flap = Math.sin(now * 15) * 0.5;
+                leftWing.rotation.z = flap;
+                rightWing.rotation.z = -flap;
+
+                // Shooting
+                if(state.input.shoot && now - state.lastShot > CONFIG.fireRate) {
+                    const l = laserPool.get();
+                    if(l) {
+                        l.position.copy(playerGroup.position);
+                        l.position.z -= 1;
+                        l.position.y += 0.5; // From mouth
+                        state.lastShot = now;
+                    }
+                }
+
+                // Lasers
+                for(let i=laserPool.active.length-1; i>=0; i--) {
+                    const l = laserPool.active[i];
+                    l.position.z -= 60 * dt;
+                    if(l.position.z < -200) laserPool.release(l);
+                }
+
+                // Spawn
+                if(Math.random() < 0.03) spawnEnemy();
+
+                // Enemies
+                const playerBox = new THREE.Box3().setFromObject(playerGroup);
+                // Shrink player box slightly for forgiveness
+                playerBox.expandByScalar(-0.5);
+
+                for(let i=enemyPool.active.length-1; i>=0; i--) {
+                    const e = enemyPool.active[i];
+                    e.position.z += CONFIG.speed * dt;
+                    e.rotation.x += dt; 
+                    e.rotation.y += dt;
+
+                    if(e.position.z > 10) { enemyPool.release(e); continue; }
+
+                    // Collision Player
+                    box1.setFromObject(e);
+                    if(box1.intersectsBox(playerBox)) {
+                        state.isRunning = false;
+                        explode(playerGroup.position, 0xFFD700);
+                        document.getElementById('final-score').innerText = state.score;
+                        document.getElementById('game-over').style.display = 'block';
+                    }
+
+                    // Collision Laser
+                    for(let j=laserPool.active.length-1; j>=0; j--) {
+                        const l = laserPool.active[j];
+                        box2.setFromObject(l);
+                        if(box1.intersectsBox(box2)) {
+                            explode(e.position, CONFIG.colors.cloud);
+                            enemyPool.release(e);
+                            laserPool.release(l);
+                            state.score += 100;
+                            document.getElementById('score-val').innerText = state.score;
+                            break;
+                        }
+                    }
+                }
+
+                // Particles
+                for(let i=particlePool.active.length-1; i>=0; i--) {
+                    const p = particlePool.active[i];
+                    p.userData.life -= dt * 1.5;
+                    if(p.userData.life <= 0) {
+                        particlePool.release(p);
+                    } else {
+                        p.position.addScaledVector(p.userData.vel, dt);
+                        p.rotation.z += dt * 5;
+                        p.scale.setScalar(p.userData.life);
+                    }
+                }
+            }
+
+            composer.render();
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth/window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
